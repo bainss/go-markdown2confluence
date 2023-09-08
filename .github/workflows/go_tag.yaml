@@ -1,0 +1,78 @@
+name: Go tests
+
+permissions:
+  id-token: write
+  contents: read
+
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      test-dir:
+        description: "Directory where tests are located"
+        type: string
+        required: false
+        default: "."
+
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+    - name: Github access token    
+      uses: NewDay-Data/shared-composite-actions/common/secrets-manager/read-secret@v1
+      with:
+        secret: |
+          AUTOMATION_TOKEN,ci/services/github/github-credentials
+
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        token: ${{ env.AUTOMATION_TOKEN }}
+
+    - name: Get SonarQube credentials
+      uses: NewDay-Data/shared-composite-actions/common/secrets-manager/read-secret@v1.3.4
+      with:
+        secret: |
+          ci/services/sonarqube/sonarqube-credentials
+        parse_json: true
+
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '>=1.20.0'
+
+    - name: Get dependencies
+      run: go mod download
+
+    - name: Run tests
+      run: go test -v ${{ inputs.test-dir }}
+
+    - name: read package.json 
+      id: info
+      uses: jaywcjlove/github-action-package@v1.3.1
+
+    - name: SonarQube Scan
+      uses: sonarsource/sonarqube-scan-action@v1.2.0
+      env: 
+        SONAR_TOKEN: ${{ env.CI_SERVICES_SONARQUBE_SONARQUBE_CREDENTIALS_SONARQUBE_TOKEN }}
+        SONAR_HOST_URL: ${{ env.CI_SERVICES_SONARQUBE_SONARQUBE_CREDENTIALS_SONARQUBE_URL }}
+      with:
+        args: |
+          -Dsonar.projectKey=${{ steps.info.outputs.projectKey }}
+    # Check the Quality Gate status.
+    - name: SonarQube Quality Gate check
+      id: sonarqube-quality-gate-check
+      uses: sonarsource/sonarqube-quality-gate-action@v1.1.0
+      env: 
+        SONAR_TOKEN: ${{ env.CI_SERVICES_SONARQUBE_SONARQUBE_CREDENTIALS_SONARQUBE_TOKEN }}
+        SONAR_HOST_URL: ${{ env.CI_SERVICES_SONARQUBE_SONARQUBE_CREDENTIALS_SONARQUBE_URL }}
+      with:
+        args: |
+          -Dsonar.projectKey=${{ steps.info.outputs.name }}
+      # Force to fail step after specific time.
+      timeout-minutes: 5
+    # Optionally you can use the output from the Quality Gate in another step.
+    # The possible outputs of the `quality-gate-status` variable are `PASSED`, `WARN` or `FAILED`.
+    - name: "SonarQube Quality Gate Status"
+      run: echo "The Quality Gate status is ${{ steps.sonarqube-quality-gate-check.outputs.quality-gate-status }}"
